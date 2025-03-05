@@ -1,0 +1,15 @@
+fastapi==0.115.11
+uvicorn==0.34.0
+pydantic==2.10.6
+python-dotenv==1.0.1
+pydantic-settings==2.8.1
+twilio==9.4.6
+elevenlabs==1.52.0
+deepgram_sdk==3.10.1
+numpy==2.2.3
+openai==1.65.3
+plivo==4.58.6
+Requests==2.32.3
+webrtcvad==2.0.10
+websockets==15.0.1
+asyncio==3.4.3
