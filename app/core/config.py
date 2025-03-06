@@ -1,6 +1,7 @@
 from enum import Enum
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from typing import Optional
 
 class Settings(BaseSettings):
     # Plivo
@@ -13,7 +14,7 @@ class Settings(BaseSettings):
     # ElevenLabs
     elevenlabs_api_key: str
     # Github
-    github_token: str
+    github_token: Optional[str] = None
     
     class Config:
         env_file = ".env"

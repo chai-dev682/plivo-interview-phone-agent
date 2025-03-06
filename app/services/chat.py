@@ -15,3 +15,5 @@ class ChatService:
 
         response = response.choices[0].message.content
         return response
+
+chat_service = ChatService()

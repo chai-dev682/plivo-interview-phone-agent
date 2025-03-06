@@ -9,9 +9,9 @@ from app.core.config import settings
 def create_xml(ws_url):
     response = plivoxml.ResponseElement().add(
         plivoxml.StreamElement(ws_url,
-                               bidirectional="true",
+                               bidirectional=True,
                                audioTrack="inbound",
-                               keepCallAlive="true",
+                               keepCallAlive=True,
                                contentType="audio/x-l16;rate=8000"))
     return response.to_string()
 

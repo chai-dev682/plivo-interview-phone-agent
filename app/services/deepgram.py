@@ -1,4 +1,4 @@
-from deepgram import Deepgram
+from deepgram import DeepgramClient
 import io
 import traceback
 import numpy as np
@@ -8,7 +8,7 @@ from app.core.config import settings
 
 class DeepgramService:
     def __init__(self):
-        self.client = Deepgram(settings.deepgram_api_key)
+        self.client = DeepgramClient(settings.deepgram_api_key)
 
     # Transcribes audio to text using Deepgram API
     async def transcribe_audio(self, audio_chunk, channels=1, sample_width=2, frame_rate=8000):
@@ -30,7 +30,7 @@ class DeepgramService:
             wav_io.seek(0)
 
             # Send the audio to Deepgram for transcription
-            response = await self.client.transcription.prerecorded({
+            response = self.client.listen.rest.v("1").transcribe_file({
                 'buffer': wav_io,  # Audio data in bytearray format
                 'mimetype': 'audio/wav'
             }, {
@@ -48,3 +48,5 @@ class DeepgramService:
             print("An error occurred during transcription:")
             traceback.print_exc()
             return None
+
+deepgram_client = DeepgramService()
