@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str
     # Github
     github_token: Optional[str] = None
+    # MySQL Database
+    DB_NAME: str
+    DB_HOST: str
+    DB_PASSWORD: str
+    DB_USER: str
+    DB_PORT: int
     
     class Config:
         env_file = ".env"
