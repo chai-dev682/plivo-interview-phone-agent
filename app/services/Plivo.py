@@ -8,21 +8,12 @@ from elevenlabs import VoiceSettings
 
 from app.core.config import settings
 from app.services.deepgram import deepgram_client
-from app.services.chat import chat_service
-
-system_msg = """Your name is Matilda. Matilda is a warm and friendly voicebot designed to have pleasant and engaging 
-conversations with customers. Matilda's primary purpose is to greet customers in a cheerful and polite manner whenever 
-they say 'hello' or any other greeting. She should respond with kindness, using a welcoming tone to make the customer 
-feel valued and appreciated.
-
-Matilda should always use positive language and maintain a light, conversational tone throughout the interaction. Her 
-responses should be concise, friendly, and focused on making the customer feel comfortable and engaged. She should avoid 
-overly complex language and strive to keep the conversation pleasant and easy-going."""
+from app.services.mysql import mysql_service
 
 class PlivoService:
     def __init__(self):
         self.elevenlabs_client = ElevenLabs(api_key=settings.elevenlabs_api_key)
-        self.messages = [{"role": "system", "content": system_msg}]
+        self.messages = []
     
     # Converts text to speech using ElevenLabs API and sends it via Plivo WebSocket
     async def text_to_speech_file(self, text: str, plivo_ws):
@@ -48,8 +39,8 @@ class PlivoService:
         # Encode the audio data in Base64 format
         encode = base64.b64encode(output).decode('utf-8')
 
-        # Send the audio data via WebSocket to Plivo
-        await plivo_ws.send(json.dumps({
+        # Send the audio data via WebSocket to Plivo with proper message type
+        await plivo_ws.send_text(json.dumps({
             "event": "playAudio",
             "media": {
                 "contentType": "audio/x-mulaw",
@@ -68,21 +59,31 @@ class PlivoService:
         inbuffer = bytearray(b'')  # Buffer to hold received audio chunks
         silence_start = 0  # Track when silence begins
         chunk = None  # Audio chunk
+        phone_number = None
+
+        questions = await mysql_service.get_interview_questions_by_phone(phone_number)
+
+        first_question = """
+        Hello, thank you for calling. My name is Matilda.
+        I am here to help you with your interview, and I will ask some questions.
+        Let's start. Okay?
+        """
 
         try:
-            async for message in plivo_ws:
+            await plivo_ws.accept()  # Accept the WebSocket connection
+            await self.text_to_speech_file(first_question, plivo_ws)
+            
+            while True:
+                message = await plivo_ws.receive_json()  # Use receive_json instead of async for
                 try:
-                    # Decode incoming messages from the WebSocket
-                    data = json.loads(message)
-
                     # If 'media' event, process the audio chunk
-                    if data['event'] == 'media':
-                        media = data['media']
+                    if message['event'] == 'media':
+                        media = message['media']
                         chunk = base64.b64decode(media['payload'])
                         inbuffer.extend(chunk)
 
                     # If 'stop' event, end receiving process
-                    if data['event'] == 'stop':
+                    if message['event'] == 'stop':
                         break
 
                     if chunk is None:
@@ -98,9 +99,13 @@ class PlivoService:
                                 transcription = await deepgram_client.transcribe_audio(inbuffer)
                                 if transcription != '':
                                     self.messages.append({"role": "user", "content": transcription})
-                                    response = await chat_service.chat(self.messages)
-                                    self.messages.append({"role": "assistant", "content": response})
-                                    await self.text_to_speech_file(response, plivo_ws)
+                                    if len(questions) == 0:
+                                        say_goodbye = "Thank you for your time. We will contact you soon."
+                                        await self.text_to_speech_file(say_goodbye, plivo_ws)
+                                    else:
+                                        question = questions.pop(0)
+                                        self.messages.append({"role": "assistant", "content": question})
+                                        await self.text_to_speech_file(question, plivo_ws)
                             inbuffer = bytearray(b'')  # Clear buffer after processing
                             silence_start = 0  # Reset silence timer
                     else:
@@ -108,10 +113,13 @@ class PlivoService:
                 except Exception as e:
                     print(f"Error processing message: {e}")
                     traceback.print_exc()
-        except websockets.exceptions.ConnectionClosedError as e:
-            print(f"Websocket connection closed")
+
+        except websockets.exceptions.ConnectionClosedError:
+            print("WebSocket connection closed")
         except Exception as e:
             print(f"Error processing message: {e}")
             traceback.print_exc()
+        finally:
+            await plivo_ws.close()
 
 plivo_service = PlivoService()

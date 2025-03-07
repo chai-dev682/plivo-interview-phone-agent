@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-class InterviewRequest(BaseModel):
+class InterviewBase(BaseModel):
     job_id: str
     phone_number: str
     questions: List[str]
@@ -10,13 +10,28 @@ class InterviewRequest(BaseModel):
     interview_language: str # en, es, fr ...
     evaluation_language: str # en, es, fr ...
 
-class Interview(InterviewRequest):
-    interview_id: str
+class InterviewCreate(InterviewBase):
+    pass
+
+class InterviewUpdate(BaseModel):
+    job_id: Optional[str] = None
+    phone_number: Optional[str] = None
+    questions: Optional[List[str]] = None
+    evaluation_criteria: Optional[List[str]] = None
+    interview_language: Optional[str] = None
+    evaluation_language: Optional[str] = None
+    is_completed: Optional[bool] = None
+
+class Interview(InterviewBase):
+    interview_id: int
     is_completed: bool = False
-    created_at: datetime
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    class Config:
+        from_attributes = True
 
 class InterviewResponseData(BaseModel):
-    interview_id: str
+    interview_id: int
     job_id: str
     phone_number: str
     is_completed: bool
