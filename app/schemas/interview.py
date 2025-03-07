@@ -9,6 +9,7 @@ class InterviewBase(BaseModel):
     evaluation_criteria: List[str]
     interview_language: str # en, es, fr ...
     evaluation_language: str # en, es, fr ...
+    call_recording_url: Optional[str] = None
 
 class InterviewCreate(InterviewBase):
     pass

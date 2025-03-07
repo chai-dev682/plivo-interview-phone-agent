@@ -34,6 +34,7 @@ class MySQLService:
                         evaluation_criteria JSON,
                         interview_language VARCHAR(50),
                         evaluation_language VARCHAR(50),
+                        call_recording_url VARCHAR(255) NULL,
                         is_completed BOOLEAN DEFAULT FALSE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
@@ -65,8 +66,8 @@ class MySQLService:
                     INSERT INTO Interview (
                         job_id, phone_number, questions,
                         evaluation_criteria, interview_language, evaluation_language,
-                        is_completed, created_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        call_recording_url, is_completed, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 questions_json = json.dumps(interview.questions)
                 criteria_json = json.dumps(interview.evaluation_criteria)
@@ -78,6 +79,7 @@ class MySQLService:
                     criteria_json,
                     interview.interview_language,
                     interview.evaluation_language,
+                    interview.call_recording_url,
                     interview.is_completed,
                     interview.created_at
                 ))

@@ -14,6 +14,7 @@ from app.services.chat import chat_service
 from app.services.deepgram import deepgram_client
 from app.services.interview import interview_service
 from app.services.evaluation import evaluation_service
+from app.services.callRecord import call_record_service
 from app.core.prompt_templates.say_hello import say_hello_prompt
 from app.core.prompt_templates.say_goodbye import say_goodbye_prompt
 from app.core.prompt_templates.lang_interview import lang_interview_prompt
@@ -78,6 +79,7 @@ class PlivoService:
         first_question = await chat_service.chat([SystemMessage(say_hello_prompt.format(language=interview_language))])
 
         try:
+            call_record = call_record_service.record_call()
             await self.text_to_speech_file(first_question, plivo_ws)
             
             while True:
@@ -110,9 +112,10 @@ class PlivoService:
                                     if len(questions) == 0:
                                         say_goodbye = await chat_service.chat([SystemMessage(say_goodbye_prompt.format(language=interview_language))])
                                         await self.text_to_speech_file(say_goodbye, plivo_ws)
+                                        call_record_service.stop_recording(call_record['call_uuid'])
                                         if not evaluated:
                                             # evaluate interview results based on the chat history
-                                            await evaluation_service.evaluate_interview(self.messages, criteria, evaluation_language)
+                                            await evaluation_service.evaluate_interview(self.messages, criteria, evaluation_language, interview.interview_id, interview.job_id, from_number, call_record['url'])
                                             evaluated = True
                                     else:
                                         question = questions.pop(0)
@@ -127,12 +130,18 @@ class PlivoService:
 
                 except websockets.exceptions.ConnectionClosedError:
                     print("WebSocket connection closed by client")
+                    call_record_service.stop_recording(call_record['call_uuid'])
+                    evaluated = False
                     break
                 except starlette.websockets.WebSocketDisconnect:
                     print("WebSocket disconnected")
+                    call_record_service.stop_recording(call_record['call_uuid'])
+                    evaluated = False
                     break
                 except Exception as e:
                     print(f"Error processing message: {e}")
+                    call_record_service.stop_recording(call_record['call_uuid'])
+                    evaluated = False
                     traceback.print_exc()
                     break
 
