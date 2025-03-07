@@ -93,10 +93,11 @@ class MySQLService:
         connection = self._get_connection()
         try:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT questions, interview_language, evaluation_language FROM Interview WHERE phone_number = %s limit 1", (phone_number,))
+                cursor.execute("SELECT * FROM Interview WHERE phone_number = %s limit 1", (phone_number,))
                 result = cursor.fetchone()
                 if result:
                     result['questions'] = json.loads(result['questions'])
+                    result['evaluation_criteria'] = json.loads(result['evaluation_criteria'])
                     return result
                 else:
                     return None

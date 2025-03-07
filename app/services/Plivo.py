@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.services.chat import chat_service
 from app.services.deepgram import deepgram_client
 from app.services.interview import interview_service
+from app.services.evaluation import evaluation_service
 from app.core.prompt_templates.say_hello import say_hello_prompt
 from app.core.prompt_templates.say_goodbye import say_goodbye_prompt
 from app.core.prompt_templates.lang_interview import lang_interview_prompt
@@ -66,11 +67,13 @@ class PlivoService:
         inbuffer = bytearray(b'')  # Buffer to hold received audio chunks
         silence_start = 0  # Track when silence begins
         chunk = None  # Audio chunk
+        evaluated = False
 
         interview = await interview_service.get_interview_by_phone(f"+{from_number}")
-        questions = interview['questions']
-        interview_language = interview['interview_language']
-        evaluation_language = interview['evaluation_language']
+        questions = interview.questions
+        interview_language = interview.interview_language
+        evaluation_language = interview.evaluation_language
+        criteria = interview.evaluation_criteria
 
         first_question = await chat_service.chat([SystemMessage(say_hello_prompt.format(language=interview_language))])
 
@@ -107,6 +110,10 @@ class PlivoService:
                                     if len(questions) == 0:
                                         say_goodbye = await chat_service.chat([SystemMessage(say_goodbye_prompt.format(language=interview_language))])
                                         await self.text_to_speech_file(say_goodbye, plivo_ws)
+                                        if not evaluated:
+                                            # evaluate interview results based on the chat history
+                                            await evaluation_service.evaluate_interview(self.messages, criteria, evaluation_language)
+                                            evaluated = True
                                     else:
                                         question = questions.pop(0)
                                         lang_interview = lang_interview_prompt.format(question=question, language=interview_language)

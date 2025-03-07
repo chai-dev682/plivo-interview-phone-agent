@@ -80,10 +80,10 @@ class InterviewService:
             logger.error(f"Error getting interviews by phone: {str(e)}")
             raise
         
-    async def get_interview_by_phone(self, phone_number: str):
+    async def get_interview_by_phone(self, phone_number: str) -> Optional[Interview]:
         try:
             interview = await mysql_service.get_interview_by_phone(phone_number)
-            return interview if interview else None
+            return Interview.model_validate(interview) if interview else None
         except Exception as e:
             logger.error(f"Error getting interview by phone: {str(e)}")
             raise
