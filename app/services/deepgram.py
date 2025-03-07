@@ -34,7 +34,8 @@ class DeepgramService:
                 'buffer': wav_io,  # Audio data in bytearray format
                 'mimetype': 'audio/wav'
             }, {
-                'punctuate': True  # Enables punctuation in transcription
+                'punctuate': True,  # Enables punctuation in transcription
+                'detect_language': True
             })
 
             # Extract the transcription result from the response

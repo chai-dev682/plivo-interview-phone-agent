@@ -1,11 +1,11 @@
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
 
 from app.routers.interview import router as interview_router
+from app.routers.call import router as call_router
 from app.services.mysql import mysql_service
-from app.services.Plivo import plivo_service
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -33,14 +33,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include HTTP routers
 app.include_router(interview_router)
-
-# WebSocket endpoint for Plivo
-@app.websocket("/stream")
-async def websocket_endpoint(websocket: WebSocket):
-    print('Plivo connection incoming')
-    await plivo_service.plivo_receiver(websocket)
+app.include_router(call_router)
 
 @app.get("/")
 async def health_check():

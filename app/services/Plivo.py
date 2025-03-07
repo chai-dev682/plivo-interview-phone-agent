@@ -5,15 +5,22 @@ import websockets
 import traceback
 from elevenlabs.client import ElevenLabs
 from elevenlabs import VoiceSettings
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_community.chat_message_histories import ChatMessageHistory
+import starlette.websockets
 
 from app.core.config import settings
+from app.services.chat import chat_service
 from app.services.deepgram import deepgram_client
-from app.services.mysql import mysql_service
+from app.services.interview import interview_service
+from app.core.prompt_templates.say_hello import say_hello_prompt
+from app.core.prompt_templates.say_goodbye import say_goodbye_prompt
+from app.core.prompt_templates.lang_interview import lang_interview_prompt
 
 class PlivoService:
     def __init__(self):
         self.elevenlabs_client = ElevenLabs(api_key=settings.elevenlabs_api_key)
-        self.messages = []
+        self.messages = ChatMessageHistory()
     
     # Converts text to speech using ElevenLabs API and sends it via Plivo WebSocket
     async def text_to_speech_file(self, text: str, plivo_ws):
@@ -21,7 +28,7 @@ class PlivoService:
             voice_id="XrExE9yKIg1WjnnlVkGX",  # Using a pre-made voice (Adam)
             output_format="ulaw_8000",  # 8kHz audio format
             text=text,
-            model_id="eleven_turbo_v2_5",
+            model_id="eleven_multilingual_v2",
             voice_settings=VoiceSettings(
                 stability=0.0,
                 similarity_boost=1.0,
@@ -50,7 +57,7 @@ class PlivoService:
         }))
 
 
-    async def plivo_receiver(self, plivo_ws, sample_rate=8000, silence_threshold=0.5):
+    async def plivo_receiver(self, plivo_ws, from_number, sample_rate=8000, silence_threshold=0.5):
         print('Plivo receiver started')
 
         # Initialize voice activity detection (VAD) with sensitivity level
@@ -59,23 +66,21 @@ class PlivoService:
         inbuffer = bytearray(b'')  # Buffer to hold received audio chunks
         silence_start = 0  # Track when silence begins
         chunk = None  # Audio chunk
-        phone_number = None
 
-        questions = await mysql_service.get_interview_questions_by_phone(phone_number)
+        interview = await interview_service.get_interview_by_phone(f"+{from_number}")
+        questions = interview['questions']
+        interview_language = interview['interview_language']
+        evaluation_language = interview['evaluation_language']
 
-        first_question = """
-        Hello, thank you for calling. My name is Matilda.
-        I am here to help you with your interview, and I will ask some questions.
-        Let's start. Okay?
-        """
+        first_question = await chat_service.chat([SystemMessage(say_hello_prompt.format(language=interview_language))])
 
         try:
-            await plivo_ws.accept()  # Accept the WebSocket connection
             await self.text_to_speech_file(first_question, plivo_ws)
             
             while True:
-                message = await plivo_ws.receive_json()  # Use receive_json instead of async for
                 try:
+                    message = await plivo_ws.receive_json()
+                    
                     # If 'media' event, process the audio chunk
                     if message['event'] == 'media':
                         media = message['media']
@@ -98,28 +103,41 @@ class PlivoService:
                             if len(inbuffer) > 2048:  # Process buffered audio if large enough
                                 transcription = await deepgram_client.transcribe_audio(inbuffer)
                                 if transcription != '':
-                                    self.messages.append({"role": "user", "content": transcription})
+                                    self.messages.add_user_message(HumanMessage(transcription))
                                     if len(questions) == 0:
-                                        say_goodbye = "Thank you for your time. We will contact you soon."
+                                        say_goodbye = await chat_service.chat([SystemMessage(say_goodbye_prompt.format(language=interview_language))])
                                         await self.text_to_speech_file(say_goodbye, plivo_ws)
                                     else:
                                         question = questions.pop(0)
-                                        self.messages.append({"role": "assistant", "content": question})
-                                        await self.text_to_speech_file(question, plivo_ws)
+                                        lang_interview = lang_interview_prompt.format(question=question, language=interview_language)
+                                        response = await chat_service.chat([SystemMessage(lang_interview)])
+                                        self.messages.add_ai_message(AIMessage(response))
+                                        await self.text_to_speech_file(response, plivo_ws)
                             inbuffer = bytearray(b'')  # Clear buffer after processing
                             silence_start = 0  # Reset silence timer
                     else:
                         silence_start = 0  # Reset if speech is detected
+
+                except websockets.exceptions.ConnectionClosedError:
+                    print("WebSocket connection closed by client")
+                    break
+                except starlette.websockets.WebSocketDisconnect:
+                    print("WebSocket disconnected")
+                    break
                 except Exception as e:
                     print(f"Error processing message: {e}")
                     traceback.print_exc()
+                    break
 
-        except websockets.exceptions.ConnectionClosedError:
-            print("WebSocket connection closed")
         except Exception as e:
-            print(f"Error processing message: {e}")
+            print(f"Error in plivo receiver: {e}")
             traceback.print_exc()
         finally:
-            await plivo_ws.close()
+            # Check if the connection is still open using WebSocket state
+            if plivo_ws.client_state != starlette.websockets.WebSocketState.DISCONNECTED:
+                try:
+                    await plivo_ws.close()
+                except Exception as e:
+                    print(f"Error closing WebSocket: {e}")
 
 plivo_service = PlivoService()

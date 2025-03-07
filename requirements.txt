@@ -17,3 +17,4 @@ langchain_core==0.3.41
 langchain_openai==0.3.7
 fastapi==0.115.11
 uvicorn==0.34.0
+python-multipart==0.0.20

@@ -79,6 +79,14 @@ class InterviewService:
         except Exception as e:
             logger.error(f"Error getting interviews by phone: {str(e)}")
             raise
+        
+    async def get_interview_by_phone(self, phone_number: str):
+        try:
+            interview = await mysql_service.get_interview_by_phone(phone_number)
+            return interview if interview else None
+        except Exception as e:
+            logger.error(f"Error getting interview by phone: {str(e)}")
+            raise
     
     async def update_interview_by_job_id(self, job_id: str, interview_id: int, update_data: InterviewUpdate) -> Optional[Interview]:
         try:

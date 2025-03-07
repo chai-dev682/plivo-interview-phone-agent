@@ -89,17 +89,17 @@ class MySQLService:
         finally:
             connection.close()
     
-    async def get_interview_questions_by_phone(self, phone_number: str):
+    async def get_interview_by_phone(self, phone_number: str):
         connection = self._get_connection()
         try:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT questions FROM Interview WHERE phone_number = %s limit 1", (phone_number,))
+                cursor.execute("SELECT questions, interview_language, evaluation_language FROM Interview WHERE phone_number = %s limit 1", (phone_number,))
                 result = cursor.fetchone()
                 if result:
-                    # Parse the JSON string into a Python list
-                    return json.loads(result['questions'])
+                    result['questions'] = json.loads(result['questions'])
+                    return result
                 else:
-                    return []
+                    return None
         finally:
             connection.close()
 
