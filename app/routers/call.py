@@ -24,7 +24,7 @@ async def inbound_call(request: Request):
 
     response = plivoxml.ResponseElement().add(
         plivoxml.StreamElement(
-            f"wss://{request.url.hostname}/plivo/stream?from_number={from_number}",
+            f"wss://{request.url.hostname}/plivo/stream?from_number={from_number}&call_uuid={call_uuid}",
             bidirectional=True,
             audioTrack="inbound",
             keepCallAlive=True,
@@ -39,7 +39,7 @@ async def inbound_call(request: Request):
 
 # WebSocket endpoint for Plivo
 @router.websocket("/stream")
-async def websocket_endpoint(websocket: WebSocket, from_number: str = "Unknown"):
+async def websocket_endpoint(websocket: WebSocket, from_number: str = "Unknown", call_uuid: str = None):
     await websocket.accept()
     print('Plivo connection incoming')
-    await plivo_service.plivo_receiver(websocket, from_number)
+    await plivo_service.plivo_receiver(websocket, from_number, call_uuid)

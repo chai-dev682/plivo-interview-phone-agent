@@ -22,6 +22,7 @@ class InterviewUpdate(BaseModel):
     interview_language: Optional[str] = None
     evaluation_language: Optional[str] = None
     is_completed: Optional[bool] = None
+    call_recording_url: Optional[str] = None
 
 class Interview(InterviewBase):
     interview_id: int

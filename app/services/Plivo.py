@@ -10,6 +10,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 import starlette.websockets
 
 from app.core.config import settings
+from app.core.logger import logger
 from app.services.chat import chat_service
 from app.services.deepgram import deepgram_client
 from app.services.interview import interview_service
@@ -58,9 +59,8 @@ class PlivoService:
             }
         }))
 
-
-    async def plivo_receiver(self, plivo_ws, from_number, sample_rate=8000, silence_threshold=0.5):
-        print('Plivo receiver started')
+    async def plivo_receiver(self, plivo_ws, from_number: str, call_uuid: str = None, sample_rate=8000, silence_threshold=0.5):
+        logger.info('Plivo receiver started')
 
         # Initialize voice activity detection (VAD) with sensitivity level
         vad = webrtcvad.Vad(1)  # Level 1 is least sensitive
@@ -71,6 +71,10 @@ class PlivoService:
         evaluated = False
 
         interview = await interview_service.get_interview_by_phone(f"+{from_number}")
+        if not interview:
+            logger.error(f"No interview found for phone number: +{from_number}")
+            return
+
         questions = interview.questions
         interview_language = interview.interview_language
         evaluation_language = interview.evaluation_language
@@ -79,7 +83,13 @@ class PlivoService:
         first_question = await chat_service.chat([SystemMessage(say_hello_prompt.format(language=interview_language))])
 
         try:
-            call_record = call_record_service.record_call()
+            call_record = None
+            if call_uuid:
+                call_record = call_record_service.record_call(call_uuid)
+                if not call_record:
+                    logger.error(f"Failed to start call recording for UUID: {call_uuid}")
+
+            logger.info(call_record)
             await self.text_to_speech_file(first_question, plivo_ws)
             
             while True:
@@ -112,10 +122,9 @@ class PlivoService:
                                     if len(questions) == 0:
                                         say_goodbye = await chat_service.chat([SystemMessage(say_goodbye_prompt.format(language=interview_language))])
                                         await self.text_to_speech_file(say_goodbye, plivo_ws)
-                                        call_record_service.stop_recording(call_record['call_uuid'])
                                         if not evaluated:
                                             # evaluate interview results based on the chat history
-                                            await evaluation_service.evaluate_interview(self.messages, criteria, evaluation_language, interview.interview_id, interview.job_id, from_number, call_record['url'])
+                                            await evaluation_service.evaluate_interview(self.messages, criteria, evaluation_language, interview.interview_id, interview.job_id, from_number, call_record['url'] if call_record else None)
                                             evaluated = True
                                     else:
                                         question = questions.pop(0)
@@ -129,24 +138,21 @@ class PlivoService:
                         silence_start = 0  # Reset if speech is detected
 
                 except websockets.exceptions.ConnectionClosedError:
-                    print("WebSocket connection closed by client")
-                    call_record_service.stop_recording(call_record['call_uuid'])
-                    evaluated = False
+                    logger.info("WebSocket connection closed by client")
                     break
                 except starlette.websockets.WebSocketDisconnect:
-                    print("WebSocket disconnected")
-                    call_record_service.stop_recording(call_record['call_uuid'])
-                    evaluated = False
+                    logger.info("WebSocket disconnected")
                     break
                 except Exception as e:
-                    print(f"Error processing message: {e}")
-                    call_record_service.stop_recording(call_record['call_uuid'])
-                    evaluated = False
+                    logger.info(f"Error processing message: {e}")
                     traceback.print_exc()
                     break
+                finally:
+                    call_record_service.stop_recording(call_uuid)
+                    evaluated = False
 
         except Exception as e:
-            print(f"Error in plivo receiver: {e}")
+            logger.info(f"Error in plivo receiver: {e}")
             traceback.print_exc()
         finally:
             # Check if the connection is still open using WebSocket state
@@ -154,6 +160,6 @@ class PlivoService:
                 try:
                     await plivo_ws.close()
                 except Exception as e:
-                    print(f"Error closing WebSocket: {e}")
+                    logger.info(f"Error closing WebSocket: {e}")
 
 plivo_service = PlivoService()
