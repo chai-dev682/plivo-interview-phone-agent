@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import webrtcvad
@@ -27,7 +28,7 @@ class PlivoService:
         self.messages = ChatMessageHistory()
     
     # Converts text to speech using ElevenLabs API and sends it via Plivo WebSocket
-    async def text_to_speech_file(self, text: str, plivo_ws):
+    async def text_to_speech_file(self, text: str, plivo_ws, end_call: bool = False):
         response = self.elevenlabs_client.text_to_speech.convert(
             voice_id="XrExE9yKIg1WjnnlVkGX",  # Using a pre-made voice (Adam)
             output_format="ulaw_8000",  # 8kHz audio format
@@ -60,6 +61,10 @@ class PlivoService:
             }
         }))
 
+        if end_call:
+            await asyncio.sleep(5)
+            await plivo_ws.close()
+
     async def plivo_receiver(self, plivo_ws, from_number: str, call_uuid: str = None, sample_rate=8000, silence_threshold=3):
         logger.info('Plivo receiver started')
 
@@ -74,6 +79,7 @@ class PlivoService:
         interview = await interview_service.get_interview_by_phone(f"+{from_number}")
         if not interview:
             logger.error(f"No interview found for phone number: +{from_number}")
+            await self.text_to_speech_file(f"No interview found for your phone number", plivo_ws, True)
             return
 
         questions = interview.questions
@@ -122,7 +128,7 @@ class PlivoService:
                                     self.messages.add_user_message(HumanMessage(transcription))
                                     if len(questions) == 0 and not evaluated:
                                         say_goodbye = await chat_service.chat([SystemMessage(say_goodbye_prompt.format(language=interview_language))])
-                                        await self.text_to_speech_file(say_goodbye, plivo_ws)
+                                        await self.text_to_speech_file(say_goodbye, plivo_ws, True)
                                         call_record_service.stop_recording(call_record['call_uuid'])
                                         # evaluate interview results based on the chat history
                                         await evaluation_service.evaluate_interview(self.messages, criteria, evaluation_language, interview.job_id, from_number, call_record['url'] if call_record else None)

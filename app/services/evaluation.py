@@ -4,6 +4,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 from app.core.logger import logger
 from app.core.prompt_templates.evaluation import evaluation_prompt
 from app.services.chat import chat_service
+from app.utils.utils import format_conversation_history
 
 class EvaluationService:
     def __init__(self):
@@ -28,13 +29,13 @@ class EvaluationService:
             logger.info(f"Evaluation: {evaluation}")
 
             # TODO: Uncomment this when webhook is ready
-            # await self.send_webhook(job_id, phone_number, call_recording_url, evaluation)
+            # await self.send_webhook(job_id, phone_number, call_recording_url, messages, evaluation)
             
         except Exception as e:
             logger.error(f"Error evaluating interview: {str(e)}")
             raise
 
-    async def send_webhook(self, job_id: str, phone_number: str, call_recording_url: str, evaluation_data: Dict):
+    async def send_webhook(self, job_id: str, phone_number: str, call_recording_url: str, messages: ChatMessageHistory, evaluation_data: Dict):
         try:
             # TODO: Customize webhook sending function here
             import aiohttp
@@ -47,7 +48,8 @@ class EvaluationService:
                 "job_id": job_id,
                 "phone_number": phone_number,
                 "call_recording_url": call_recording_url,
-                "evaluation": evaluation_data
+                "evaluation": evaluation_data,
+                "call_transcript": format_conversation_history(messages)
             }
 
             # Send POST request to webhook URL
