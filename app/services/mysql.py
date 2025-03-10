@@ -61,7 +61,15 @@ class MySQLService:
         connection = self._get_connection()
         try:
             with connection.cursor() as cursor:
-                # TODO: Add Exception for same phone number and same job id
+                # Check for existing interview with same phone number and job ID
+                check_sql = """
+                    SELECT interview_id FROM Interview 
+                    WHERE phone_number = %s AND job_id = %s
+                """
+                cursor.execute(check_sql, (interview.phone_number, interview.job_id))
+                if cursor.fetchone():
+                    raise ValueError(f"Interview already exists for phone number {interview.phone_number} and job ID {interview.job_id}")
+
                 sql = """
                     INSERT INTO Interview (
                         job_id, phone_number, questions,
@@ -95,7 +103,7 @@ class MySQLService:
         connection = self._get_connection()
         try:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT * FROM Interview WHERE phone_number = %s limit 1", (phone_number,))
+                cursor.execute("SELECT * FROM Interview WHERE phone_number = %s AND is_completed = 0 limit 1", (phone_number,))
                 result = cursor.fetchone()
                 if result:
                     result['questions'] = json.loads(result['questions'])

@@ -19,6 +19,7 @@ from app.services.callRecord import call_record_service
 from app.core.prompt_templates.say_hello import say_hello_prompt
 from app.core.prompt_templates.say_goodbye import say_goodbye_prompt
 from app.core.prompt_templates.lang_interview import lang_interview_prompt
+from app.schemas.interview import InterviewUpdate
 
 class PlivoService:
     def __init__(self):
@@ -59,7 +60,7 @@ class PlivoService:
             }
         }))
 
-    async def plivo_receiver(self, plivo_ws, from_number: str, call_uuid: str = None, sample_rate=8000, silence_threshold=0.5):
+    async def plivo_receiver(self, plivo_ws, from_number: str, call_uuid: str = None, sample_rate=8000, silence_threshold=3):
         logger.info('Plivo receiver started')
 
         # Initialize voice activity detection (VAD) with sensitivity level
@@ -119,13 +120,14 @@ class PlivoService:
                                 transcription = await deepgram_client.transcribe_audio(inbuffer)
                                 if transcription != '':
                                     self.messages.add_user_message(HumanMessage(transcription))
-                                    if len(questions) == 0:
+                                    if len(questions) == 0 and not evaluated:
                                         say_goodbye = await chat_service.chat([SystemMessage(say_goodbye_prompt.format(language=interview_language))])
                                         await self.text_to_speech_file(say_goodbye, plivo_ws)
-                                        if not evaluated:
-                                            # evaluate interview results based on the chat history
-                                            await evaluation_service.evaluate_interview(self.messages, criteria, evaluation_language, interview.interview_id, interview.job_id, from_number, call_record['url'] if call_record else None)
-                                            evaluated = True
+                                        call_record_service.stop_recording(call_record['call_uuid'])
+                                        # evaluate interview results based on the chat history
+                                        await evaluation_service.evaluate_interview(self.messages, criteria, evaluation_language, interview.job_id, from_number, call_record['url'] if call_record else None)
+                                        await interview_service.update_interview(interview.interview_id, InterviewUpdate(is_completed=True, call_recording_url=call_record['url'] if call_record else None))
+                                        evaluated = True
                                     else:
                                         question = questions.pop(0)
                                         lang_interview = lang_interview_prompt.format(question=question, language=interview_language)
@@ -144,22 +146,22 @@ class PlivoService:
                     logger.info("WebSocket disconnected")
                     break
                 except Exception as e:
-                    logger.info(f"Error processing message: {e}")
+                    logger.error(f"Error processing message: {e}")
                     traceback.print_exc()
                     break
-                finally:
-                    call_record_service.stop_recording(call_uuid)
-                    evaluated = False
 
         except Exception as e:
-            logger.info(f"Error in plivo receiver: {e}")
+            logger.error(f"Error in plivo receiver: {e}")
             traceback.print_exc()
         finally:
             # Check if the connection is still open using WebSocket state
+            evaluated = False
+            if call_record:
+                call_record_service.stop_recording(call_record['call_uuid'])
             if plivo_ws.client_state != starlette.websockets.WebSocketState.DISCONNECTED:
                 try:
                     await plivo_ws.close()
                 except Exception as e:
-                    logger.info(f"Error closing WebSocket: {e}")
+                    logger.error(f"Error closing WebSocket: {e}")
 
 plivo_service = PlivoService()

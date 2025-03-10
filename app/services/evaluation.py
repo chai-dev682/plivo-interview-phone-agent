@@ -4,8 +4,6 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 from app.core.logger import logger
 from app.core.prompt_templates.evaluation import evaluation_prompt
 from app.services.chat import chat_service
-from app.services.interview import interview_service
-from app.schemas.interview import InterviewUpdate
 
 class EvaluationService:
     def __init__(self):
@@ -16,7 +14,6 @@ class EvaluationService:
         messages: ChatMessageHistory,
         criteria: List[str],
         evaluation_language: str,
-        interview_id: int,
         job_id: str,
         phone_number: str,
         call_recording_url: str
@@ -30,7 +27,6 @@ class EvaluationService:
 
             logger.info(f"Evaluation: {evaluation}")
 
-            await interview_service.update_interview(interview_id, InterviewUpdate(is_completed=True, call_recording_url=call_recording_url))
             # TODO: Uncomment this when webhook is ready
             # await self.send_webhook(job_id, phone_number, call_recording_url, evaluation)
             
