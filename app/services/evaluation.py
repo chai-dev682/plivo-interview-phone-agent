@@ -29,7 +29,7 @@ class EvaluationService:
             logger.info(f"Evaluation: {evaluation}")
 
             # TODO: Uncomment this when webhook is ready
-            # await self.send_webhook(job_id, phone_number, call_recording_url, messages, evaluation)
+            await self.send_webhook(job_id, phone_number, call_recording_url, messages, evaluation)
             
         except Exception as e:
             logger.error(f"Error evaluating interview: {str(e)}")
@@ -41,7 +41,7 @@ class EvaluationService:
             import aiohttp
             
             # TODO: Get webhook URL from environment variable or other source
-            webhook_url = f"https://api.plivo.com/v1/Account/PLIVO_ACCOUNT_ID/Webhook/inbound_call/"
+            webhook_url = f"https://webhook.site/21742565-ba62-4ce6-ab62-83bab0924b1c"
 
             # Prepare the payload
             payload = {

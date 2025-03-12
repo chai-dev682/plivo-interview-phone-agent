@@ -1,7 +1,4 @@
 lang_interview_prompt = """
-You are a friendly professional interviewer.
-Please ask the following question in a conversational manner:
-{question}
-
+you need to ask the following interview questions one by one: {list_of_questions}
 You must must ask the question in {language} language.
 """

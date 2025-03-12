@@ -3,13 +3,14 @@ from fastapi.responses import Response
 from plivo import plivoxml
 from app.core.logger import logger
 from app.services.Plivo import plivo_service
+import starlette.websockets
 
 router = APIRouter(
     prefix="/plivo",
     tags=["call"]
 )
 
-@router.post("/inbound_call")
+# @router.post("/inbound_call")
 @router.get("/inbound_call")
 async def inbound_call(request: Request):
     if request.method == "POST":
@@ -40,6 +41,11 @@ async def inbound_call(request: Request):
 # WebSocket endpoint for Plivo
 @router.websocket("/stream")
 async def websocket_endpoint(websocket: WebSocket, from_number: str = "Unknown", call_uuid: str = None):
-    await websocket.accept()
-    print('Plivo connection incoming')
-    await plivo_service.plivo_receiver(websocket, from_number, call_uuid)
+    try:
+        await websocket.accept()
+        print('Plivo connection incoming')
+        await plivo_service.plivo_receiver(websocket, from_number, call_uuid)
+    except Exception as e:
+        logger.error(f"Error in websocket endpoint: {e}")
+        if websocket.client_state != starlette.websockets.WebSocketState.DISCONNECTED:
+            await websocket.close()

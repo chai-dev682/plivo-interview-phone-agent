@@ -11,7 +11,8 @@ class CallRecordService:
 
     def record_call(self, call_uuid: str):
         data = self.client.calls.record(
-            call_uuid=call_uuid
+            call_uuid=call_uuid,
+            time_limit=600
         )
         return {'call_uuid': call_uuid, 'url': data['url']}
     

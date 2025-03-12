@@ -14,7 +14,12 @@ class ChatService:
         )
 
     async def chat(self, messages: ChatMessageHistory | List[BaseMessage]) -> str:
+        # If messages is ChatMessageHistory, get the messages list
+        if isinstance(messages, ChatMessageHistory):
+            messages = messages.messages
+        
         response = self.model.invoke(messages)
+        print(f"LLM Response: {response.content}")
         return response.content
     
     def function_call(self, prompt, function_name):
