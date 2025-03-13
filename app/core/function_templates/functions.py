@@ -41,6 +41,23 @@ function_list = [
                 "required": ["criteria", "final_score"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "call_ended",
+            "description": "Check if the call has ended",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "call_ended": {
+                        "type": "boolean",
+                        "description": "True if the call has ended, False otherwise"
+                    }
+                },
+                "required": ["call_ended"]
+            }
+        }
     }
 ]
 

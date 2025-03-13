@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import Response
 from plivo import plivoxml
 from app.core.logger import logger
-from app.services.Plivo import plivo_service
+from app.services.Plivo import PlivoService
 import starlette.websockets
 
 router = APIRouter(
@@ -29,7 +29,7 @@ async def inbound_call(request: Request):
             bidirectional=True,
             audioTrack="inbound",
             keepCallAlive=True,
-            contentType="audio/x-l16;rate=8000"
+            contentType="audio/x-mulaw;rate=8000"
         )
     )
     
@@ -44,6 +44,7 @@ async def websocket_endpoint(websocket: WebSocket, from_number: str = "Unknown",
     try:
         await websocket.accept()
         print('Plivo connection incoming')
+        plivo_service = PlivoService()
         await plivo_service.plivo_receiver(websocket, from_number, call_uuid)
     except Exception as e:
         logger.error(f"Error in websocket endpoint: {e}")
