@@ -3,10 +3,7 @@ import base64
 import json
 import websockets
 import traceback
-from elevenlabs.client import ElevenLabs
-from elevenlabs.conversational_ai.conversation import Conversation
-from elevenlabs import ConversationConfig
-from elevenlabs import VoiceSettings
+from openai import OpenAI
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_community.chat_message_histories import ChatMessageHistory
 import starlette.websockets
@@ -22,7 +19,7 @@ from app.core.prompt_templates.call_ended import call_ended_prompt
 from app.utils.utils import format_conversation_history
 from app.schemas.interview import InterviewUpdate
 
-elevenlabs_client = ElevenLabs(api_key=settings.elevenlabs_api_key)
+client = OpenAI(api_key=settings.openai_api_key)
 
 class PlivoService:
     def __init__(self):
@@ -34,41 +31,30 @@ class PlivoService:
         except RuntimeError:
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
-    
-    # Converts text to speech using ElevenLabs API and sends it via Plivo WebSocket
+
     async def text_to_speech_file(self, text: str, end_call: bool = False):
+        """Convert text to speech using OpenAI and send it via Plivo WebSocket."""
         try:
-            response = elevenlabs_client.text_to_speech.convert(
-                voice_id="XrExE9yKIg1WjnnlVkGX",  # Using a pre-made voice (Adam)
-                output_format="ulaw_8000",  # 8kHz audio format
-                text=text,
-                model_id="eleven_multilingual_v2",
-                voice_settings=VoiceSettings(
-                    stability=0.0,
-                    similarity_boost=1.0,
-                    style=0.0,
-                    use_speaker_boost=True,
-                ),
+            response = client.audio.speech.create(
+                model="tts-1",  # OpenAI's TTS model
+                voice="alloy",  # Available voices: alloy, echo, fable, onyx, nova, shimmer
+                input=text,
             )
 
-            # Collect the audio data from the response
-            output = bytearray(b'')
-            for chunk in response:
-                if chunk:
-                    output.extend(chunk)
+            # Stream AI-generated speech to Plivo
+            audio_bytes = response.content
+            encoded_audio = base64.b64encode(audio_bytes).decode("utf-8")
 
-            # Encode the audio data in Base64 format
-            encode = base64.b64encode(output).decode('utf-8')
-
-            # Send the audio data via WebSocket to Plivo with proper message type
-            await self.plivo_ws.send_text(json.dumps({
+            audio_message = {
                 "event": "playAudio",
                 "media": {
                     "contentType": "audio/x-mulaw",
                     "sampleRate": 8000,
-                    "payload": encode
+                    "payload": encoded_audio
                 }
-            }))
+            }
+
+            await self.plivo_ws.send_text(json.dumps(audio_message))
 
             if end_call:
                 await asyncio.sleep(4)  # Give time for audio to finish playing
@@ -79,21 +65,38 @@ class PlivoService:
                     self.messages.clear()
                 except Exception as e:
                     logger.error(f"Error during graceful shutdown: {e}")
+
         except Exception as e:
-            logger.error(f"Error in text_to_speech_file: {e}")
+            logger.error(f"Error in OpenAI TTS: {e}")
+
+    async def generate_ai_response(self, text: str) -> str:
+        """Generates AI response using OpenAI GPT-4."""
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are an AI interview assistant. Conduct the interview professionally."},
+                    {"role": "user", "content": text}
+                ]
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Error generating AI response: {e}")
+            return "I'm sorry, I couldn't process that."
 
     def handle_transcript(self, transcription):
-        """Handle incoming transcription from Deepgram"""
+        """Handles incoming transcription from Deepgram."""
         print(f"Transcription: {transcription}")
         self.messages.add_user_message(HumanMessage(transcription))
     
     async def handle_agent_response(self, text):
+        """Handles AI response and checks if call should end."""
         print(f"Agent response: {text}")
         self.messages.add_ai_message(AIMessage(text))
 
-        # check if call ended by calling the openai function tool with the transcription
         if len(self.messages.messages) < 5:
             return
+
         call_ended = chat_service.function_call(call_ended_prompt.format(
             transcript=format_conversation_history(self.messages)
         ), "call_ended")
@@ -122,44 +125,16 @@ class PlivoService:
             
             logger.info("Clearing messages...")
             self.messages.clear()
-            self.conversation.end_session()
             try:
                 if self.plivo_ws.client_state == starlette.websockets.WebSocketState.CONNECTED:
                     await self.plivo_ws.close(code=1000)  # Normal closure
             except Exception as e:
                 logger.error(f"Error during graceful shutdown: {e}")
 
-    def transcript_callback(self, text):
-        """Wrapper to handle async transcript callback"""
-        if not hasattr(self, 'loop') or not self.loop:
-            logger.error("Event loop not initialized")
-            return
-            
-        async def _handle_transcript_wrapper():
-            try:
-                await self.handle_agent_response(text)
-            except Exception as e:
-                logger.error(f"Error handling transcript: {e}")
-                traceback.print_exc()
-
-        # Create a new event loop for this thread if needed
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        # Run the coroutine in the event loop
-        loop.run_until_complete(_handle_transcript_wrapper())
-    
-    # def agent_response_callback(self, text):
-    #     """Wrapper to handle async agent response callback"""
-    #     asyncio.create_task(self.handle_agent_response(text))
-
     async def plivo_receiver(self, plivo_ws, from_number: str, call_uuid: str = None):
+        """Handles incoming WebSocket connection from Plivo and manages AI-powered interviews."""
         logger.info('Plivo receiver started')
-        
-        # Store instance variables for use in handle_transcript
+
         self.plivo_ws = plivo_ws
         self.plivo_ws.streamId = None
         self.from_number = from_number
@@ -174,34 +149,15 @@ class PlivoService:
                 await self.text_to_speech_file(f"No interview found for your phone number", True)
                 return
             
-            # Initialize interview context
             self.questions = self.interview.questions
             questions_str = "\n".join(question for question in self.questions)
             self.interview_language = self.interview.interview_language
             self.evaluation_language = self.interview.evaluation_language
             self.criteria = self.interview.evaluation_criteria
 
-            dynamic_vars = {
-                "list_of_questions": questions_str,
-                "language": self.interview_language
-            }
-            config = ConversationConfig(
-                dynamic_variables=dynamic_vars,
-                extra_body={},
-                conversation_config_override={}
-            )
-
-            self.conversation = Conversation(
-                client=elevenlabs_client,
-                agent_id="9ZwQQQTZOdL9cBSHURn0",
-                config=config,
-                requires_auth=True,
-                audio_interface=self.audio_interface,
-                callback_agent_response=self.transcript_callback,
-                callback_user_transcript=lambda text: self.handle_transcript(text),
-            )
-            self.conversation.start_session()
-            logger.info("Conversation started")
+            # Begin interview process
+            ai_intro_message = f"Hello, welcome to your interview. I will be asking you the following questions:\n{questions_str}"
+            await self.text_to_speech_file(ai_intro_message)
 
             if call_uuid:
                 try:
@@ -221,7 +177,7 @@ class PlivoService:
                         self.plivo_ws.streamId = data["start"]["streamId"]
                     elif data['event'] == 'stop':
                         break
-                    
+
                     await self.audio_interface.handle_plivo_message(data)
 
                 except asyncio.TimeoutError:
@@ -241,12 +197,9 @@ class PlivoService:
             logger.error(f"Error in plivo receiver: {e}")
             traceback.print_exc()
         finally:
-            # Cleanup
             if self.call_record:
                 call_record_service.stop_recording(self.call_record['call_uuid'])
-            
-            self.conversation.end_session()
-            
+
             if plivo_ws.client_state != starlette.websockets.WebSocketState.DISCONNECTED:
                 try:
                     await plivo_ws.close()
