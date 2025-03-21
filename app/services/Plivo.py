@@ -4,6 +4,7 @@ import json
 import websockets
 import traceback
 import starlette.websockets
+import openai  # Newly added for GPT Turbo functionality
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_community.chat_message_histories import ChatMessageHistory
 from app.core.config import settings
@@ -16,10 +17,12 @@ from app.services.audio.plivo_audio import PlivoAudioInterface
 from app.core.prompt_templates.call_ended import call_ended_prompt
 from app.utils.utils import format_conversation_history
 from app.schemas.interview import InterviewUpdate
+from openai import OpenAI
 
 # OpenAI API Credentials
 OPENAI_API_KEY = settings.openai_api_key
-OPENAI_REALTIME_WS_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01"
+client = OpenAI(api_key=OPENAI_API_KEY)
+OPENAI_REALTIME_WS_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17"
 
 async def openai_websocket_connect(url, headers):
     """Establishes a WebSocket connection to OpenAI API."""
@@ -44,6 +47,9 @@ class PlivoService:
         # Added flags to track conversation state:
         self.waiting_for_response = False  # Indicates if the AI is waiting for a candidate response
         self.current_question_answered = False  # Tracks if the current question has been adequately answered
+
+        # New flag to ensure interview ends only once
+        self.interview_ended = False
 
     def start_session(self):
         """Starts the conversation session."""
@@ -75,9 +81,10 @@ class PlivoService:
             headers = {
                 "Authorization": f"Bearer {OPENAI_API_KEY}",
                 "Content-Type": "application/json",
+                "OpenAI-Beta": "realtime=v1"
             }
 
-            async with websockets.connect(OPENAI_REALTIME_WS_URL, extra_headers=headers) as ws:
+            async with websockets.connect(OPENAI_REALTIME_WS_URL, additional_headers=headers) as ws:
                 await ws.send(json.dumps(tts_payload))
 
                 # Wait for OpenAI to respond with audio
@@ -190,43 +197,121 @@ class PlivoService:
 
     async def end_interview(self):
         """Finalizes the interview, evaluates the conversation, and updates the interview status."""
-        logger.info("🔹 Interview completed")
-        print("Interview completed")
+        # Prevent multiple calls to end_interview
+        if self.interview_ended:
+            return
+        self.interview_ended = True
+
+        logger.info("🔹 Interview completed - Starting end_interview process")
+        print("Interview completed - Starting end_interview process")
         
-        conclusion_message = {
-            "type": "response.create",
-            "response": {
-                "modalities": ["text", "audio"],
-                "temperature": 0.8,
-                "instructions": "Thank the candidate for their time and inform them that the interview is now complete."
-            }
-        }
-        await self.openai_ws.send(json.dumps(conclusion_message))
-        print("Sent conclusion message to OpenAI.")
-        await asyncio.sleep(5)
+        try:
+            # Only send conclusion if openai_ws is still open
+            if self.openai_ws and self.openai_ws.close_code is None:
+                conclusion_message = {
+                    "type": "response.create",
+                    "response": {
+                        "modalities": ["text", "audio"],
+                        "temperature": 0.8,
+                        "instructions": "Thank the candidate for their time and inform them that the interview is now complete. in this language '{self.}'"
+                    }
+                }
+                await self.openai_ws.send(json.dumps(conclusion_message))
+                logger.info("Sent conclusion message to OpenAI")
+                print("Sent conclusion message to OpenAI")
+                await asyncio.sleep(6)
+        except Exception as e:
+            logger.error(f"Error sending conclusion message: {e}")
+            print(f"Error sending conclusion message: {e}")
         
-        await evaluation_service.evaluate_interview(
-            self.messages,
-            self.criteria,
-            self.evaluation_language,
-            self.interview.job_id,
-            self.from_number,
-            self.call_record['url'] if self.call_record else None
-        )
-        await interview_service.update_interview(
-            self.interview.interview_id,
-            InterviewUpdate(
-                is_completed=True,
-                call_recording_url=self.call_record['url'] if self.call_record else None
+        try:
+            # Stop recording if active
+            if self.call_record:
+                logger.info(f"Stopping call recording for UUID: {self.call_record['call_uuid']}")
+                print(f"Stopping call recording for UUID: {self.call_record['call_uuid']}")
+                call_record_service.stop_recording(self.call_record['call_uuid'])
+                logger.info(f"Call recording stopped. Recording URL: {self.call_record['url']}")
+                print(f"Call recording stopped. Recording URL: {self.call_record['url']}")
+            else:
+                logger.warning("No call recording to stop")
+                print("No call recording to stop")
+            
+            logger.info(f"Updating interview status for ID: {self.interview.interview_id}")
+            print(f"Updating interview status for ID: {self.interview.interview_id}")
+            res = await interview_service.update_interview(
+                self.interview.interview_id,
+                InterviewUpdate(
+                    is_completed=True,
+                    call_recording_url=self.call_record['url'] if self.call_record else None
+                )
             )
-        )
+            logger.info("Interview status updated successfully")
+            print("Interview status updated successfully ",res)
+            
+            # Evaluate interview and update status
+            logger.info("Starting interview evaluation...")
+            print("Starting interview evaluation...")
+            await evaluation_service.evaluate_interview(
+                self.messages,
+                self.criteria,
+                self.evaluation_language,
+                self.interview.job_id,
+                self.from_number,
+                self.call_record['url'] if self.call_record else None
+            )
+            logger.info("Interview evaluation completed")
+            print("Interview evaluation completed")
+            
+           
+        except Exception as e:
+            logger.error(f"Error during interview evaluation and status update: {e}")
+            print(f"Error during interview evaluation and status update: {e}")
+        
+        # Clean up resources
+        logger.info("Clearing messages...")
+        print("Clearing messages...")
         self.messages.clear()
-        self.end_session()
-        if self.plivo_ws.client_state == starlette.websockets.WebSocketState.CONNECTED:
-            await self.plivo_ws.close(code=1000)
+        self.end_session()  # Using end_session instead of conversation.end_session
+        
+        # Close the Plivo WebSocket if still open
+        try:
+            if hasattr(self, 'plivo_ws') and self.plivo_ws and self.plivo_ws.client_state == starlette.websockets.WebSocketState.CONNECTED:
+                logger.info("Closing Plivo WebSocket connection")
+                print("Closing Plivo WebSocket connection")
+                try:
+                    await self.plivo_ws.close(code=1000)
+                    logger.info("Plivo WebSocket closed successfully")
+                    print("Plivo WebSocket closed successfully")
+                except RuntimeError as e:
+                    # Handle "send once closed" error
+                    if "close message has been sent" in str(e):
+                        logger.info("WebSocket was already closing")
+                    else:
+                        raise
+        except Exception as e:
+            logger.error(f"Error closing Plivo WebSocket: {e}")
+            print(f"Error closing Plivo WebSocket: {e}")
+            
+        # Close the OpenAI WebSocket if still open
+        try:
+            if self.openai_ws and self.openai_ws.close_code is None:
+                logger.info("Closing OpenAI WebSocket connection")
+                print("Closing OpenAI WebSocket connection")
+                await self.openai_ws.close(code=1000)
+                logger.info("OpenAI WebSocket closed successfully")
+                print("OpenAI WebSocket closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing OpenAI WebSocket: {e}")
+            print(f"Error closing OpenAI WebSocket: {e}")
+            
+        logger.info("🔹 End interview process completed")
+        print("End interview process completed")
 
     async def receive_from_openai(self, message):
         """Handles AI-generated responses from OpenAI."""
+        # Do not process further if the interview has ended.
+        if self.interview_ended:
+            return
         try:
             response = json.loads(message)
 
@@ -255,8 +340,10 @@ class PlivoService:
                 ):
                     transcript = response["response"]["output"][0]["content"][0]["transcript"]
                     print("Transcript:", transcript)
-                    # If this is the initial greeting, start the first question after a delay
-                    if self.current_question_index == 0 and not self.waiting_for_response:
+                    # Use GPT Turbo to decide if we should end the interview based on the transcript.
+                    interview_should_end = await process_transcript_with_gpt_turbo(transcript, self)
+                    # If GPT Turbo did not decide to end the interview and this is an initial greeting, ask next question.
+                    if not interview_should_end and self.current_question_index == 0 and not self.waiting_for_response:
                         await asyncio.sleep(3)
                         await self.ask_next_question()
 
@@ -338,22 +425,18 @@ class PlivoService:
                 )
             )
             self.messages.clear()
-            self.end_session()
+            await asyncio.sleep(6)  # Added delay before ending the interview
+            await self.end_interview()
             if self.plivo_ws.client_state == starlette.websockets.WebSocketState.CONNECTED:
                 await self.plivo_ws.close(code=1000)
 
-    # Added send_openai_session_update method to resolve AttributeError.
     async def send_openai_session_update(self):
         """Configures the OpenAI session with required parameters, including a system prompt with interview instructions."""
-        system_prompt = f"You are conducting an interview in language code '{self.interview_language}'. Please ask and answer all questions in this language. "
-        system_prompt += "You are a human recruiter conducting this job interview. Do not mention that you are an AI, a language model, or any kind of assistant. Never refer to yourself as an AI. "
-        system_prompt += "Begin by introducing yourself as the recruiter, ask for the candidate's name, and make them feel comfortable. "
-        system_prompt += "Speak naturally with pauses and conversational style. Never repeat your sentences. "
-        system_prompt += "For each question, wait for the candidate to answer completely. Listen carefully to their responses. "
-        system_prompt += "Before moving to the next question, acknowledge their answer and provide brief feedback when appropriate. "
-        system_prompt += "If the candidate gives an incomplete answer, ask follow-up questions to get more details. "
-        system_prompt += "Only move to the next question when you're satisfied with the completeness of their answer. "
-        system_prompt += "Be patient and give the candidate time to think and respond. This is a conversation, not a rapid-fire quiz."
+        system_prompt = f"You are conducting a brief interview in language code '{self.interview_language}'. "
+        system_prompt += "Introduce yourself briefly as a recruiter. Ask for the candidate's name. "
+        system_prompt += "Then ask each question from the list below one by one. "
+        system_prompt += "Do not provide feedback or follow-up questions. Just ask the next question after the candidate responds. "
+        system_prompt += "After all questions are asked, thank the candidate and end the call."
         
         if self.questions:
             system_prompt += "\nYou will be asking the following questions:\n"
@@ -380,11 +463,40 @@ class PlivoService:
         await self.openai_ws.send(json.dumps(session_update))
         logger.info("🔹 Session updated with system prompt.")
         print("Session updated with system prompt.")
+    
+    async def play_local_audio_file(self,file_path):
+        """
+        Reads a local WAV file and sends it to Plivo WebSocket as a base64-encoded payload.
+        """
+        try:
+            # Read the audio file in binary mode
+            with open(file_path, "rb") as audio_file:
+                audio_data = audio_file.read()
+            
+            # Encode the audio file to base64
+            base64_audio = base64.b64encode(audio_data).decode("utf-8")
+
+            # Send the audio payload to Plivo
+            audio_message = {
+                "event": "playAudio",
+                "media": {
+                    "contentType": "audio/x-mulaw",
+                    "sampleRate": 8000,
+                    "payload": base64_audio
+                }
+            }
+            # print(audio_message," audio_message")
+            await self.plivo_ws.send_text(json.dumps(audio_message))
+            print("📢 Successfully sent local audio file to Plivo!")
+
+        except Exception as e:
+            print(f"❌ Error playing local audio file: {e}")
 
     async def plivo_receiver(self, plivo_ws, from_number: str, call_uuid: str = None):
         """Handles WebSocket communication between Plivo and OpenAI for real-time interviews."""
         logger.info("🔹 Plivo receiver started")
         print("Plivo receiver started")
+        print(call_uuid," call_uid")
 
         self.plivo_ws = plivo_ws
         self.from_number = from_number
@@ -393,17 +505,33 @@ class PlivoService:
         self.waiting_for_response = False
         self.current_question_answered = False
 
+        if call_uuid:
+            try:
+                self.call_record = call_record_service.record_call(call_uuid)
+                if not self.call_record:
+                    logger.error(f"Failed to start call recording for UUID: {call_uuid}")
+                else:
+                    logger.info(f"Call recording started for UUID: {call_uuid}")
+            except Exception as e:
+                logger.error(f"Error starting call recording: {e}")
+                self.call_record = None
+
         try:
             # Retrieve interview details
             self.interview = await interview_service.get_interview_by_phone(f"+{from_number}")
+            print("self.interview ", self.interview)
             if not self.interview:
                 logger.error(f"No interview found for phone number: +{from_number}")
                 print(f"No interview found for phone number: +{from_number}")
-                await self.text_to_speech_file("No interview found for your phone number", True)
+                await self.play_local_audio_file("app/services/Alloy_tts-1-hd_1x_2025-03-20T07_34_38-811Z_G711.org_.wav")
+                await asyncio.sleep(5)
                 return
 
-            # Set up interview variables
+            logger.info(f"Interview data retrieved: {self.interview}")
+            
+            # Load interview questions
             self.questions = self.interview.questions
+            logger.info(f"Interview questions received: {self.questions}")
             self.interview_language = self.interview.interview_language
             self.evaluation_language = self.interview.evaluation_language
             self.criteria = self.interview.evaluation_criteria
@@ -430,8 +558,9 @@ class PlivoService:
                         "modalities": ["text", "audio"],
                         "temperature": 0.8,
                         "instructions": (
-                            "Introduce yourself as a recruiter (not an AI). Use a warm, professional tone. "
-                            "Ask for the candidate's name and make them feel welcome. Do not mention anything about being an assistant or AI model."
+                            "Say: 'Hello! I'm a recruiter, and I will be conducting your interview today. Can you please tell me your name?' "
+                            "Use a warm, professional tone. Keep it brief and welcoming. "
+                            "Do not mention anything about being an assistant or AI model."
                         )
                     }
                 }
@@ -447,6 +576,9 @@ class PlivoService:
 
                 # Process messages from OpenAI
                 async for message in self.openai_ws:
+                    # Check if the interview has ended before processing further messages
+                    if self.interview_ended:
+                        break
                     if self.openai_ws.close_code is None:
                         await self.receive_from_openai(message)
 
@@ -457,9 +589,91 @@ class PlivoService:
             print(f"Error in plivo_receiver: {e}")
             traceback.print_exc()
         finally:
-            if self.call_record:
+            if self.call_record and not self.interview_ended:
                 call_record_service.stop_recording(self.call_record['call_uuid'])
             if self.openai_ws:
                 await self.openai_ws.close()
             if plivo_ws.client_state != starlette.websockets.WebSocketState.DISCONNECTED:
                 await plivo_ws.close()
+            if not receive_plivo_task.done():
+                receive_plivo_task.cancel()
+                try:
+                    await receive_plivo_task
+                except asyncio.CancelledError:
+                    pass
+
+# ------------------------------------------------------------------------------
+# Process transcript with GPT Turbo and decide to end the interview
+# ------------------------------------------------------------------------------
+async def process_transcript_with_gpt_turbo(transcript: str, service_instance: PlivoService) -> bool:
+    """
+    Uses GPT-3.5-turbo to analyze the interview transcript
+    and decide whether the interview should be terminated.
+
+    Returns True if the interview should be ended (and calls end_interview),
+    or False if the interview should continue.
+    """
+    try:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a recruitment assistant. Analyze the interview transcript carefully. "
+                    "If the candidate has completed the interview or has used phrases indicating the conversation should end, return 'end_interview' as true. "
+                    "Otherwise, return 'end_interview' as false.\n\n"
+                    "Common phrases that suggest ending an interview include:\n"
+                    "- English: 'thank you', 'thanks', 'appreciate it', 'grateful', 'have a nice day'\n"
+                    "- Hindi: 'dhanyavaad', 'धन्यवाद', 'apka din accha ho'\n"
+                    "- French: 'merci'\n"
+                    "- German: 'danke'\n"
+                    "- Spanish: 'gracias', 'muchas gracias'\n"
+                    "- Italian: 'grazie'\n"
+                    "- Japanese: 'ありがとう'\n"
+                    "- Korean: '감사합니다'\n"
+                    "- Russian: 'спасибо'\n"
+                    "- Arabic: 'شكرا'\n\n"
+                    "Only return 'end_interview' as true if the candidate's response suggests the interview is over or they are concluding."
+                )
+            },
+            {"role": "user", "content": transcript}
+        ]
+
+        functions = [
+            {
+                "name": "end_interview_decision",
+                "description": "Decide if the interview should be ended.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "end_interview": {"type": "boolean"}
+                    },
+                    "required": ["end_interview"]
+                }
+            }
+        ]
+
+        # Call GPT asynchronously
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gpt-3.5-turbo",
+            messages=messages,
+            functions=functions,
+            function_call={"name": "end_interview_decision"}
+        )
+
+        message = response.choices[0].message
+        function_args = json.loads(message.function_call.arguments)
+
+        if function_args.get("end_interview"):
+            print("GPT decision: End interview")
+            # Wait for 6 seconds before ending the interview
+            await asyncio.sleep(6)
+            await service_instance.end_interview()
+            return True
+
+        print("GPT decision: Continue interview")
+        return False
+
+    except Exception as e:
+        print(f"Error processing transcript with GPT Turbo: {e}")
+        return False
