@@ -18,6 +18,7 @@ from app.core.prompt_templates.call_ended import call_ended_prompt
 from app.utils.utils import format_conversation_history
 from app.schemas.interview import InterviewUpdate
 from openai import OpenAI
+from app.core import state
 
 # OpenAI API Credentials
 OPENAI_API_KEY = settings.openai_api_key
@@ -50,6 +51,7 @@ class PlivoService:
 
         # New flag to ensure interview ends only once
         self.interview_ended = False
+        print(state.admin_config.get("welcome_message"))
 
     def start_session(self):
         """Starts the conversation session."""
@@ -70,12 +72,13 @@ class PlivoService:
         try:
             logger.info(f"🗣️ Requesting OpenAI TTS for: {text}")
             print(f"Requesting OpenAI TTS for: {text}")
+            voice_value = state.admin_config.get("voice") or "alloy"
 
             # OpenAI API call to generate speech
             tts_payload = {
                 "model": "tts-1",  # Ensure you're using an OpenAI model that supports TTS
                 "input": text,
-                "voice": "alloy",
+                "voice": voice_value,
             }
 
             headers = {
@@ -433,10 +436,15 @@ class PlivoService:
     async def send_openai_session_update(self):
         """Configures the OpenAI session with required parameters, including a system prompt with interview instructions."""
         system_prompt = f"You are conducting a brief interview in language code '{self.interview_language}'. "
-        system_prompt += "Introduce yourself briefly as a recruiter. Ask for the candidate's name. "
-        system_prompt += "Then ask each question from the list below one by one. "
-        system_prompt += "Do not provide feedback or follow-up questions. Just ask the next question after the candidate responds. "
-        system_prompt += "After all questions are asked, thank the candidate and end the call."
+        prompt = state.admin_config.get("prompt") or (
+        "Introduce yourself briefly as a recruiter. Ask for the candidate's name. "
+        "Then ask each question from the list below one by one. "
+        "Do not provide feedback or follow-up questions. Just ask the next question after the candidate responds. "
+        "After all questions are asked, thank the candidate and end the call."
+        )
+        system_prompt += prompt
+        print("prompt",prompt)
+
         
         if self.questions:
             system_prompt += "\nYou will be asking the following questions:\n"
@@ -551,17 +559,19 @@ class PlivoService:
                 print("Connected to OpenAI Realtime API")
                 await self.send_openai_session_update()
 
+                welcome_message = state.admin_config.get("welcome_message") or (
+                            "Say: 'Hello! I'm a recruiter, and I will be conducting your interview today. Can you please tell me your name?' "
+                            "Use a warm, professional tone. Keep it brief and welcoming. "
+                            "Do not mention anything about being an assistant or AI model."
+                        )
+
                 # Add initial welcome message
                 welcome_message = {
                     "type": "response.create",
                     "response": {
                         "modalities": ["text", "audio"],
                         "temperature": 0.8,
-                        "instructions": (
-                            "Say: 'Hello! I'm a recruiter, and I will be conducting your interview today. Can you please tell me your name?' "
-                            "Use a warm, professional tone. Keep it brief and welcoming. "
-                            "Do not mention anything about being an assistant or AI model."
-                        )
+                        "instructions": welcome_message
                     }
                 }
                 await self.openai_ws.send(json.dumps(welcome_message))

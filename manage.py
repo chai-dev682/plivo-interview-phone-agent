@@ -3,9 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
 
+
 from app.routers.interview import router as interview_router
 from app.routers.call import router as call_router
 from app.services.mysql import mysql_service
+from app.admin.admin import router as admin_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -35,6 +37,7 @@ app.add_middleware(
 
 app.include_router(interview_router)
 app.include_router(call_router)
+app.include_router(admin_router)
 
 @app.get("/")
 async def health_check():

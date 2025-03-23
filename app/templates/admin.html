@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Settings</title>
+</head>
+<body style="font-family: Arial, sans-serif; background-color: #f5f7fa; padding: 40px; color: #333;">
+
+    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1);">
+        <h2 style="text-align: center; color: #444;">⚙️ Admin Panel</h2>
+
+        {% if success %}
+        <p style="color: green; text-align: center; font-weight: bold;">✅ Settings updated successfully!</p>
+        {% endif %}
+
+        <form method="post" action="/admin">
+            <!-- Plivo Auth ID -->
+            <label style="display: block; margin-bottom: 10px;">
+                <span style="display: inline-block; width: 140px;">Plivo Auth ID:</span>
+                <input type="text" name="plivo_auth_id" value="{{ data.plivo_auth_id if data else '' }}" style="width: calc(100% - 150px); padding: 8px;" 
+                />
+            </label>
+
+            <!-- Plivo Auth Token -->
+            <label style="display: block; margin-bottom: 10px;">
+                <span style="display: inline-block; width: 140px;">Plivo Auth Token:</span>
+                <input type="text" name="plivo_auth_token" value="{{ data.plivo_auth_token if data else '' }}" style="width: calc(100% - 150px); padding: 8px;" />
+            </label>
+
+            <!-- Welcome Message -->
+            <label style="display: block; margin-bottom: 10px;">
+                <span style="display: inline-block; width: 340px;">Welcome Message:</span>
+                <input type="text" name="welcome_message" value="{{ data.welcome_message if data else '' }}" style="width: calc(100% - 150px); padding: 8px;" />
+            </label>
+
+            <!-- Prompt -->
+            <label style="display: block; margin-bottom: 15px;">
+                <span style="display: block; margin-bottom: 5px;">Prompt:</span>
+                <textarea name="prompt" rows="4" style="width: 100%; padding: 10px; resize: vertical;">{{ data.prompt if data else '' }}</textarea>
+            </label>
+
+            <!-- Voice Dropdown -->
+            <label style="display: block; margin-bottom: 15px;">
+                <span style="display: inline-block; width: 140px;">Voice:</span>
+                <select name="voice" style="width: calc(100% - 150px); padding: 8px;">
+                    {% for v in ['alloy', 'ash', 'coral', 'echo', 'ballad', 'sage', 'shimmer', 'verse'] %}
+                    <option value="{{ v }}" {% if data and data.voice == v %}selected{% endif %}>{{ v }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+
+            <!-- Submit Button -->
+            <div style="text-align: center;">
+                <button type="submit" style="padding: 10px 20px; background-color: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    💾 Save Settings
+                </button>
+            </div>
+        </form>
+    </div>
+
+</body>
+</html>
