@@ -5,6 +5,7 @@ from app.core.logger import logger
 from app.core.prompt_templates.evaluation import evaluation_prompt
 from app.services.chat import chat_service
 from app.utils.utils import format_conversation_history
+from app.core import state
 
 class EvaluationService:
     def __init__(self):
@@ -41,7 +42,7 @@ class EvaluationService:
             import aiohttp
             
             # TODO: Get webhook URL from environment variable or other source
-            webhook_url = f"https://webhook.site/21742565-ba62-4ce6-ab62-83bab0924b1c"
+            webhook_url = state.admin_config.get("webhook_url") or f"https://webhook.site/21742565-ba62-4ce6-ab62-83bab0924b1c"
 
             # Prepare the payload
             payload = {
@@ -51,6 +52,7 @@ class EvaluationService:
                 "evaluation": evaluation_data,
                 "call_transcript": format_conversation_history(messages)
             }
+            print("webhook evaluation payload: ",payload)
 
             # Send POST request to webhook URL
             async with aiohttp.ClientSession() as session:

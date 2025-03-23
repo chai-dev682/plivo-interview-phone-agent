@@ -26,6 +26,11 @@
                 <input type="text" name="plivo_auth_token" value="{{ data.plivo_auth_token if data else '' }}" style="width: calc(100% - 150px); padding: 8px;" />
             </label>
 
+            <label style="display: block; margin-bottom: 10px;">
+                <span style="display: inline-block; width: 340px;">Webhook Url:</span>
+                <input type="text" name="webhook_url" value="{{ data.webhook_url if data else '' }}" style="width: calc(100% - 150px); padding: 8px;" />
+            </label>
+
             <!-- Welcome Message -->
             <label style="display: block; margin-bottom: 10px;">
                 <span style="display: inline-block; width: 340px;">Welcome Message:</span>

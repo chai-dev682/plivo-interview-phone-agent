@@ -17,5 +17,6 @@ admin_config = {
         "After all questions are asked, thank the candidate and end the call."
         ) or "",
     "voice": "alloy",  # default
+    "webhook_url": "https://webhook.site/21742565-ba62-4ce6-ab62-83bab0924b1c"
 }
 
